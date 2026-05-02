@@ -1,34 +1,45 @@
-// File: /api/chat.js
-export default async function handler(req, res) {
-  // Biar bisa dipanggil dari HTML
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+export const config = { runtime: 'edge' };
 
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method!== 'POST') return res.status(405).json({ error: 'Pake POST kak' });
+export default async function handler(req) {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      }
+    });
+  }
+
+  if (req.method !== 'POST') {
+    return new Response('Pake POST kak', { status: 405 });
+  }
 
   try {
-    const { history } = req.body;
+    const { history } = await req.json();
+    const GEMINI_KEY = process.env.GEMINI_KEY;
+    
+    if (!GEMINI_KEY) {
+      return new Response(JSON.stringify({ error: 'GEMINI_KEY belum di set di Vercel' }), { status: 500 });
+    }
 
-    // GEMINI_KEY diambil dari Vercel Environment. Aman!
-    const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${process.env.GEMINI_KEY}`, {
+    const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_KEY}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: history,
-        generationConfig: {
-          temperature: 0.9,
-          maxOutputTokens: 2048, // 4000+ karakter
-          topP: 0.95
-        }
+        generationConfig: { temperature: 0.9, maxOutputTokens: 2048 }
       })
     });
 
     const data = await geminiRes.json();
-    return res.status(200).json(data);
+    return new Response(JSON.stringify(data), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+    });
 
   } catch (e) {
-    return res.status(500).json({ error: e.message });
+    return new Response(JSON.stringify({ error: e.message }), { status: 500 });
   }
 }

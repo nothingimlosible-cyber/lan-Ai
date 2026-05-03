@@ -1,68 +1,83 @@
-export const config = { runtime: 'edge' };
+import { kv } from '@vercel/kv';
 
-export default async function handler(req) {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, {
-      status: 200,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      }
-    });
-  }
-
-  if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method harus POST' }), { status: 405 });
-  }
-
+export default async function handler(req, res) {
   try {
-    const { history } = await req.json();
-    const GEMINI_KEY = process.env.GEMINI_KEY;
-    
-    if (!GEMINI_KEY) {
-      return new Response(JSON.stringify({ error: 'GEMINI_KEY belum di set di Vercel Environment' }), { 
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
+    const { pesan, aksi = 'chat', userId = 'anon' } = await req.json();
+    let koin = await kv.get(`koin:${userId}`) || 5000; // Gratis 5rb buat test
+
+    const headers = {
+      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+      'Content-Type': 'application/json'
+    };
+
+    // 1. CHAT GRATIS PAKE GPT-4o-MINI = MURAH BANGET
+    if (aksi === 'chat') {
+      const gpt = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: 'Kamu Lan AI dari Bandung. Jawab singkat, gaul, pake "kak" dan "🍄". Maksimal 2 kalimat.' },
+            { role: 'user', content: pesan }
+          ]
+        })
       });
+      const data = await gpt.json();
+      const jawaban = data.choices[0].message.content;
+      return res.json({ jawaban, koin });
     }
 
-    // PAKE MODEL TERBARU 2026
-    const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: history,
-        generationConfig: { 
-          temperature: 0.9, 
-          maxOutputTokens: 4000 
-        }
-      })
-    });
+    // 2. GENERATE GAMBAR = 1000 KOIN - PAKE DALL-E 3
+    if (aksi === 'gambar') {
+      if (koin < 1000) return res.json({ error: 'Koin kurang kak. Topup 1rb dulu 🚀', koin });
+      koin -= 1000;
+      await kv.set(`koin:${userId}`, koin);
 
-    const data = await geminiRes.json();
-    
-    if (!geminiRes.ok) {
-      return new Response(JSON.stringify({ 
-        error: `Gemini Error: ${data.error?.message || JSON.stringify(data)}` 
-      }), { 
-        status: geminiRes.status,
-        headers: { 'Content-Type': 'application/json' }
+      const dalle = await fetch('https://api.openai.com/v1/images/generations', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: 'dall-e-3',
+          prompt: pesan + ', digital art, masterpiece',
+          n: 1,
+          size: '1024x1024',
+          quality: 'standard'
+        })
       });
+      const data = await dalle.json();
+      const urlGambar = data.data[0].url;
+
+      return res.json({ urlGambar, koin, sukses: `Gambar HD jadi. Sisa koin: ${koin}` });
     }
 
-    return new Response(JSON.stringify(data), {
-      status: 200,
-      headers: { 
-        'Content-Type': 'application/json', 
-        'Access-Control-Allow-Origin': '*' 
-      }
-    });
+    // 3. GENERATE VIDEO = 1000 KOIN - PAKE DALL-E + ANIMATE
+    if (aksi === 'video') {
+      if (koin < 1000) return res.json({ error: 'Koin kurang kak 🚀', koin });
+      koin -= 1000;
+      await kv.set(`koin:${userId}`, koin);
+
+      // Step 1: Bikin gambar dulu pake DALL-E
+      const dalle = await fetch('https://api.openai.com/v1/images/generations', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: 'dall-e-3',
+          prompt: pesan,
+          n: 1,
+          size: '1024x1024'
+        })
+      });
+      const dataGambar = await dalle.json();
+      const urlGambar = dataGambar.data[0].url;
+
+      // Step 2: Animasiin. SEMENTARA PAKE API GRATIS. Nanti ganti Runway
+      const urlVideo = `https://api.zephra.ai/animate?image=${encodeURIComponent(urlGambar)}`;
+
+      return res.json({ urlVideo, urlGambar, koin, sukses: `Video 3 detik jadi. Sisa koin: ${koin}` });
+    }
 
   } catch (e) {
-    return new Response(JSON.stringify({ error: 'Server Error: ' + e.message }), { 
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    res.json({ error: 'Error OpenAI kak: ' + e.message });
   }
 }
